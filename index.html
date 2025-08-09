@@ -1,0 +1,1391 @@
+<!--
+================================================================================
+Odeabank2 - Ultra Advanced Frontend for Credit Score Manager
+Single-file frontend deployable to GitHub Pages (no build step required).
+================================================================================
+
+READ ME (top-of-file):
+1) Replace API_BASE with your ngrok or backend URL:
+   const API_BASE = "{{https://f11b2548dbd5.ngrok-free.app}}"
+   e.g. const API_BASE = "https://f11b2548dbd5.ngrok-free.app"
+
+2) DEV / DEMO mode:
+   - Set DEV_MODE = true to use mocked data and fake auth (handy for frontend dev).
+   - Set DEV_MODE = false to call the real backend.
+
+3) Required backend endpoints (map & payloads):
+   - POST  ${API_BASE}/auth/login            { username, password } -> { access_token, expires_in, employee_name, role }
+   - POST  ${API_BASE}/auth/refresh          { refresh_token } -> { access_token, expires_in }
+   - POST  ${API_BASE}/users                 { identifier, name }
+   - GET   ${API_BASE}/users
+   - GET   ${API_BASE}/users/{id}
+   - PUT   ${API_BASE}/users/{id}            { identifier, name }
+   - DELETE${API_BASE}/users/{id}
+   - POST  ${API_BASE}/loans                 { user_identifier, amount, loan_type, start_date, term_months, interest_rate }
+   - GET   ${API_BASE}/users/{id}/loans
+   - GET   ${API_BASE}/loans/{loan_id}
+   - POST  ${API_BASE}/loans/{loan_id}/payment  { amount }
+   - POST  ${API_BASE}/loans/{loan_id}/default
+   - POST  ${API_BASE}/loans/{loan_id}/close
+   - GET   ${API_BASE}/logs?limit=100
+   - POST  ${API_BASE}/admin/seed-demo       (optional)
+   - POST  ${API_BASE}/admin/init            (optional)
+   - GET   ${API_BASE}/admin/status          (optional)
+   Note: If your backend uses different field names, use the adapter section in the JS.
+
+4) CORS:
+   - If you host frontend on GitHub Pages, set your FastAPI CORS to allow your pages' origin.
+   - In FastAPI: `from fastapi.middleware.cors import CORSMiddleware` and add the origin(s).
+
+5) Deploy to GitHub Pages:
+   - Create a repo, add this `index.html` to the root of the `main` branch, go to Settings -> Pages -> choose main branch / root -> Save.
+   - GitHub Pages URL will be `https://<yourusername>.github.io/<repo>/` (or root domain if using username.github.io).
+
+6) How to test locally:
+   - Run backend: `uvicorn credit_score_fastapi:app --host 0.0.0.0 --port 8080 --reload`
+   - Run ngrok: `ngrok http 8080`
+   - Copy ngrok URL and paste into API_BASE (or use a quick const replacement)
+   - Open the GitHub Pages frontend (or open this file locally) and login with credentials from backend or demo credentials.
+
+7) Security notes:
+   - Token stored in sessionStorage (safer than localStorage for this use-case); do NOT store persistent secrets on clients.
+   - Use HTTPS (ngrok provides HTTPS) and limit CORS origins.
+   - Implement server-side role checks — frontend role toggles only control UI, not permissions.
+
+================================================================================
+Libraries used (CDN):
+- Vue 3 (https://unpkg.com/vue@3)
+- Axios (https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js)
+- Chart.js 4 (https://cdn.jsdelivr.net/npm/chart.js)
+- Tabulator (https://unpkg.com/tabulator-tables@5.4.4/dist/js/tabulator.min.js and CSS)
+- SweetAlert2 (https://cdn.jsdelivr.net/npm/sweetalert2@11)
+- Toastify (https://cdn.jsdelivr.net/npm/toastify-js)
+- dayjs (https://cdn.jsdelivr.net/npm/dayjs/dayjs.min.js)
+- Cleave.js (https://cdn.jsdelivr.net/npm/cleave.js@1.6.0/dist/cleave.min.js)
+================================================================================
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Odeabank2 — Credit Score Manager (Dashboard)</title>
+
+  <!-- Tabulator CSS -->
+  <link href="https://unpkg.com/tabulator-tables@5.4.4/dist/css/tabulator_min.css" rel="stylesheet">
+  <!-- SweetAlert2 -->
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <!-- Toastify -->
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+
+  <style>
+    /* ---------- Glassmorphism + Theme ---------- */
+    :root{
+      --bg: linear-gradient(180deg,#0f1724 0%, #071028 100%);
+      --card-bg: rgba(255,255,255,0.06);
+      --glass-border: rgba(255,255,255,0.08);
+      --accent: #4fd1c5;
+      --accent-2: #60a5fa;
+      --text: #e6eef6;
+      --muted: #98a8bf;
+      --danger: #ff6b6b;
+      --success: #4ade80;
+      --glass-blur: 10px;
+      --radius: 14px;
+    }
+    [data-theme="light"]{
+      --bg: linear-gradient(180deg,#f6f9fc 0%, #e6eef6 100%);
+      --card-bg: rgba(255,255,255,0.6);
+      --glass-border: rgba(0,0,0,0.06);
+      --accent: #0077cc;
+      --accent-2: #4c51bf;
+      --text: #05243a;
+      --muted: #304052;
+      --danger: #c03434;
+      --success: #2d8a4a;
+      --glass-blur: 6px;
+      --radius: 12px;
+    }
+
+    html,body,#app{ height:100%; margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
+    body{
+      background: var(--bg);
+      color:var(--text);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      padding:24px;
+      box-sizing:border-box;
+    }
+    .app-shell {
+      display:flex;
+      gap:20px;
+      align-items:stretch;
+      height: calc(100vh - 48px);
+    }
+    /* Left nav */
+    .nav {
+      width: 260px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: 0 4px 18px rgba(2,6,23,0.6), inset 0 1px 0 rgba(255,255,255,0.02);
+      backdrop-filter: blur(var(--glass-blur));
+      border: 1px solid var(--glass-border);
+      display:flex;
+      flex-direction:column;
+    }
+    .brand { font-weight:700; font-size:20px; color:var(--text); display:flex; align-items:center; gap:10px; }
+    .brand .logo {
+      width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#05243a;
+      box-shadow:0 6px 18px rgba(0,0,0,0.35);
+    }
+    .nav .search { margin-top:12px; }
+    .nav input{ width:100%; padding:8px 10px; border-radius:10px; border:none; background:rgba(255,255,255,0.02); color:var(--text); outline:none;}
+    .nav ul{ list-style:none; padding:0; margin:16px 0 0 0; display:flex; flex-direction:column; gap:8px; }
+    .nav button.nav-item { background:transparent; border:0; text-align:left; padding:10px 12px; border-radius:10px; color:var(--muted); cursor:pointer; transition:all .18s; }
+    .nav button.nav-item:hover{ transform:translateX(6px); color:var(--text); background:rgba(255,255,255,0.02); box-shadow: 0 6px 18px rgba(2,6,23,0.4);}
+    .nav .actions { margin-top:auto; display:flex; gap:8px; flex-direction:column; }
+    /* Main content */
+    .main {
+      flex:1;
+      display:flex;
+      flex-direction:column;
+      gap:18px;
+    }
+    .topbar {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      padding:16px;
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(var(--glass-blur));
+      box-shadow: 0 8px 30px rgba(2,6,23,0.45);
+    }
+    .cards-row { display:flex; gap:12px; }
+    .card.small { flex:1; min-width:120px; text-align:center; }
+    .card.large { flex:1; min-width:300px; }
+    .controls { display:flex; gap:8px; align-items:center; }
+    .btn {
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      padding:8px 12px; border-radius:10px; color:var(--text); border:1px solid rgba(255,255,255,0.04); cursor:pointer;
+    }
+    .btn.primary { background: linear-gradient(90deg,var(--accent),var(--accent-2)); color:#042033; font-weight:600; box-shadow:0 8px 18px rgba(63,81,181,0.1);}
+    .badge { padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.03); color:var(--muted); font-weight:600; font-size:13px; }
+    .role { display:flex; gap:8px; align-items:center; }
+    /* Layout pieces */
+    .content-grid { display:grid; grid-template-columns: 1fr 420px; gap:12px; align-items:start; }
+    .panel { display:flex; flex-direction:column; gap:8px; }
+    /* Table area (Tabulator will replace this) */
+    #users-table { height: 360px; }
+    #loans-table { height: 280px; }
+    /* Forms */
+    form label { display:block; font-size:13px; color:var(--muted); margin-top:8px; }
+    form input, form select { width:100%; padding:8px 10px; border-radius:8px; border:none; background:rgba(255,255,255,0.02); color:var(--text); outline:none; }
+    .field-row { display:flex; gap:8px; }
+    .field-row > * { flex:1; }
+    /* Footer */
+    footer { margin-top:auto; font-size:13px; color:var(--muted); }
+    /* Responsive */
+    @media(max-width:980px){
+      .app-shell { flex-direction:column; height:auto; }
+      .nav { width:100%; display:flex; flex-direction:row; overflow:auto; gap:8px; padding:8px; border-radius:12px; }
+      .main { width:100%; }
+      .content-grid { grid-template-columns: 1fr; }
+      #users-table { height:320px; }
+    }
+    /* Tiny helpers */
+    .muted { color:var(--muted); font-size:13px; }
+    .text-xl { font-size:20px; font-weight:700; }
+    .rounded { border-radius:12px; }
+    .center { text-align:center; }
+    .chip { padding:6px 10px; border-radius:999px; background:rgba(0,0,0,0.08); display:inline-block; }
+    .flex { display:flex; gap:8px; }
+  </style>
+</head>
+<body data-theme="dark">
+  <div id="app">
+    <!-- APP shell -->
+    <div class="app-shell">
+      <!-- Left navigation -->
+      <aside class="nav card" role="navigation" aria-label="Main Navigation">
+        <div class="brand" tabindex="0">
+          <div class="logo">O2</div>
+          <div>
+            <div style="font-size:13px;color:var(--muted)">Odeabank2</div>
+            <div style="font-size:12px;color:var(--muted)"><small>Credit Score Manager</small></div>
+          </div>
+        </div>
+
+        <div class="search">
+          <input v-model="ui.search" placeholder="Quick search users..." @keyup.enter="searchUsers" aria-label="Search users" />
+        </div>
+
+        <ul>
+          <button class="nav-item" :class="{active:ui.view==='dashboard'}" @click="ui.view='dashboard'">Dashboard</button>
+          <button class="nav-item" :class="{active:ui.view==='users'}" @click="ui.view='users'">Users</button>
+          <button class="nav-item" :class="{active:ui.view==='loans'}" @click="ui.view='loans'">Loans</button>
+          <button class="nav-item" :class="{active:ui.view==='logs'}" @click="ui.view='logs'">Logs</button>
+          <button class="nav-item" :class="{active:ui.view==='admin'}" @click="ui.view='admin'">Admin / Tools</button>
+        </ul>
+
+        <div class="actions">
+          <div style="display:flex;gap:8px;">
+            <button class="btn" @click="openCreateUser()">+ New User</button>
+            <button class="btn" @click="openAddLoan()">+ New Loan</button>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="btn" @click="refreshAll()">Refresh</button>
+            <button class="btn" @click="toggleTheme()" :title="'Toggle light/dark (current: ' + theme + ')'">Theme</button>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:12px;">
+            <div class="muted"><small v-if="DEV_MODE">DEMO MODE</small></div>
+            <div class="muted"><small>Connected: <strong>{{connected? 'Online' : 'Offline'}}</strong></small></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <main class="main">
+        <!-- Topbar -->
+        <div class="topbar">
+          <div class="text-xl">Dashboard</div>
+          <div class="controls">
+            <div class="role card" style="display:flex;align-items:center;gap:10px;padding:8px 12px;">
+              <div style="min-width:34px; min-height:34px; border-radius:8px; background:linear-gradient(90deg,var(--accent),var(--accent-2)); display:flex;align-items:center;justify-content:center;color:#042033;font-weight:700;">
+                <span v-text="initials"></span>
+              </div>
+              <div style="display:flex;flex-direction:column;">
+                <div style="font-size:13px;font-weight:700" v-text="userSession.employee_name || 'Not logged'"></div>
+                <div style="font-size:12px;color:var(--muted)">{{userSession.role || 'guest'}}</div>
+              </div>
+              <div style="margin-left:10px;">
+                <button class="btn" v-if="!loggedIn" @click="openLogin()">Login</button>
+                <button class="btn" v-if="loggedIn" @click="logout()">Logout</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content area -->
+        <section class="content-grid">
+          <div>
+            <!-- Dashboard view -->
+            <div v-if="ui.view==='dashboard'">
+              <div class="cards-row">
+                <div class="card small">
+                  <div class="muted">Total Users</div>
+                  <div style="font-size:20px;font-weight:800">{{stats.total_users}}</div>
+                </div>
+                <div class="card small">
+                  <div class="muted">Active Loans</div>
+                  <div style="font-size:20px;font-weight:800">{{stats.active_loans}}</div>
+                </div>
+                <div class="card small">
+                  <div class="muted">Defaults</div>
+                  <div style="font-size:20px;font-weight:800;color:var(--danger)">{{stats.defaults}}</div>
+                </div>
+                <div class="card small">
+                  <div class="muted">Avg Score</div>
+                  <div style="font-size:20px;font-weight:800">{{stats.avg_score}}</div>
+                </div>
+              </div>
+
+              <div style="display:flex;gap:12px;margin-top:12px;">
+                <div class="card large">
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div><strong>Score Trend</strong><div class="muted">Recent activity & trends</div></div>
+                    <div class="muted">Last updated: {{stats.last_updated}}</div>
+                  </div>
+                  <canvas id="scoreTrendChart" style="margin-top:12px;"></canvas>
+                </div>
+
+                <div class="card large">
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div><strong>Loan Distribution</strong><div class="muted">By loan type</div></div>
+                    <div class="muted">Live</div>
+                  </div>
+                  <canvas id="loanDonutChart" style="margin-top:12px;"></canvas>
+                </div>
+              </div>
+
+              <div style="display:flex;gap:12px;margin-top:12px;">
+                <div class="card" style="flex:1">
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div><strong>Recent Activity</strong><div class="muted">Audit log</div></div>
+                    <div>
+                      <button class="btn" @click="downloadLogsCSV()">Export CSV</button>
+                    </div>
+                  </div>
+                  <div id="recent-logs" style="margin-top:10px; max-height:220px; overflow:auto;">
+                    <div v-for="l in logs.slice(0,12)" :key="l.id" style="padding:8px;border-bottom:1px dashed rgba(255,255,255,0.02)">
+                      <div style="display:flex;justify-content:space-between">
+                        <div><strong>{{l.action}}</strong> <span class="muted">— {{l.user_identifier || 'system'}}</span></div>
+                        <div class="muted">{{formatDate(l.timestamp)}}</div>
+                      </div>
+                      <div class="muted" style="font-size:13px">{{l.details}}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card" style="width:360px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div><strong>Quick Actions</strong><div class="muted">Admin tools</div></div>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+                    <button class="btn primary" @click="openCreateUser()">Create new user</button>
+                    <button class="btn" @click="openAddLoan()">Create new loan</button>
+                    <button class="btn" @click="seedDemo()">Seed Demo Data</button>
+                    <button class="btn" @click="initDB()">Init DB</button>
+                    <button class="btn" @click="backup()">Trigger Backup</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Users view -->
+            <div v-if="ui.view==='users'" class="panel">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <div><strong>Users</strong><div class="muted">Search, edit, delete users</div></div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <input v-model="ui.userFilter" placeholder="Filter by name/identifier" />
+                  <button class="btn" @click="loadUsers()">Refresh</button>
+                  <button class="btn primary" @click="openCreateUser()">+ New</button>
+                </div>
+              </div>
+
+              <div id="users-table" class="card" style="margin-top:10px"></div>
+
+              <div v-if="selectedUser" class="card" style="margin-top:10px">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <div>
+                    <div style="font-weight:800;font-size:16px">{{selectedUser.name}}</div>
+                    <div class="muted">ID: {{selectedUser.identifier}} • Created {{selectedUser.created_at}}</div>
+                  </div>
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <div v-if="selectedUser.frozen" class="chip" style="background:linear-gradient(90deg,var(--danger),#ff9b9b);color:#042033">FROZEN</div>
+                    <div class="badge">Score: <strong style="margin-left:6px">{{selectedUser.score}}</strong></div>
+                    <button class="btn" @click="editUser(selectedUser)">Edit</button>
+                    <button class="btn" @click="deleteUser(selectedUser)">Delete</button>
+                  </div>
+                </div>
+
+                <div style="margin-top:12px;display:flex;gap:12px;">
+                  <div style="flex:1;">
+                    <h4>Loans</h4>
+                    <div id="selected-loans-table"></div>
+                  </div>
+                  <div style="width:320px;">
+                    <h4>Score breakdown</h4>
+                    <canvas id="breakdownChart"></canvas>
+                    <div style="margin-top:12px;">
+                      <button class="btn" @click="exportUserJSON(selectedUser)">Export Profile JSON</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Loans view -->
+            <div v-if="ui.view==='loans'">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div><strong>Loans</strong><div class="muted">Global loan list and actions</div></div>
+                <div style="display:flex;gap:8px;">
+                  <select v-model="ui.loanFilterType">
+                    <option value="">All types</option>
+                    <option v-for="t in loanTypes" :value="t">{{t}}</option>
+                  </select>
+                  <select v-model="ui.loanFilterStatus">
+                    <option value="">All status</option>
+                    <option value="open">Open</option>
+                    <option value="defaulted">Defaulted</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                  <button class="btn" @click="loadLoans()">Refresh</button>
+                </div>
+              </div>
+
+              <div id="loans-table" style="margin-top:10px"></div>
+            </div>
+
+            <!-- Logs view -->
+            <div v-if="ui.view==='logs'">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div><strong>Logs</strong><div class="muted">Audit trail & exports</div></div>
+                <div style="display:flex;gap:8px;">
+                  <input v-model="ui.logsUser" placeholder="Filter by user id" />
+                  <input type="date" v-model="ui.logsFrom" />
+                  <input type="date" v-model="ui.logsTo" />
+                  <button class="btn" @click="loadLogs()">Filter</button>
+                  <button class="btn" @click="downloadLogsCSV()">Export</button>
+                </div>
+              </div>
+
+              <div style="margin-top:10px;" class="card">
+                <div v-for="log in logs" :key="log.id" style="padding:8px;border-bottom:1px dashed rgba(255,255,255,0.02)">
+                  <div style="display:flex;justify-content:space-between">
+                    <div><strong>{{log.action}}</strong> <span class="muted">— {{log.user_identifier || 'system'}}</span></div>
+                    <div class="muted">{{formatDate(log.timestamp)}}</div>
+                  </div>
+                  <div class="muted" style="font-size:13px">{{log.details}}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Admin -->
+            <div v-if="ui.view==='admin'">
+              <div class="card">
+                <h3>Admin / System</h3>
+                <div class="muted">System controls and status</div>
+
+                <div style="display:flex;gap:12px; margin-top:12px;">
+                  <button class="btn" @click="seedDemo()">Seed Demo Data</button>
+                  <button class="btn" @click="initDB()">Init DB</button>
+                  <button class="btn" @click="backup()">Trigger Backup</button>
+                  <button class="btn" @click="showSystemStatus()">Status</button>
+                </div>
+
+                <div style="margin-top:12px;">
+                  <pre style="background:rgba(0,0,0,0.06); padding:10px; border-radius:8px; color:var(--muted);">Server status: {{systemStatus | json}}</pre>
+                </div>
+
+                <div style="margin-top:12px;">
+                  <h4>Restore / Import</h4>
+                  <input type="file" @change="handleImport($event)" />
+                  <small class="muted">Upload JSON exported from 'Export Profile JSON' to restore for dev/test.</small>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right side column -->
+          <aside style="display:flex;flex-direction:column;gap:12px">
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div><strong>Quick Search</strong><div class="muted">Find users by ID or name</div></div>
+                <div class="muted">Shortcut: /</div>
+              </div>
+              <div style="margin-top:10px;">
+                <input v-model="ui.quick" placeholder="e.g. 123456789 or John Doe" />
+                <div style="margin-top:8px;display:flex;gap:8px;">
+                  <button class="btn" @click="quickSearch()">Search</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div><strong>Theme</strong><div class="muted">Appearance</div></div>
+                <div>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" v-model="isLight" @change="applyTheme" />
+                    <span class="muted">Light</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div><strong>About</strong></div>
+              <div class="muted" style="margin-top:8px">
+                Ultra frontend for Credit Score Manager. <br>
+                Version: <strong>2025.08.08</strong><br>
+                Connected backend: <strong>{{API_BASE}}</strong>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <footer class="muted">© Odeabank2 — Credit Score Manager — Keep your data safe. Demo mode: {{DEV_MODE ? 'ON' : 'OFF'}}</footer>
+      </main>
+    </div>
+
+    <!-- Modals & hidden areas -->
+    <div id="modal-root"></div>
+
+  </div>
+
+  <!-- Libraries (CDNs) -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cleave.js@1.6.0/dist/cleave.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/tabulator-tables@5.4.4/dist/js/tabulator_min.js"></script>
+
+  <script>
+  /*****************************************************************************
+   * CONFIG
+   *****************************************************************************/
+  const DEV_MODE = true; // <<-- Set to false when backend is ready and API_BASE set
+  const API_BASE = "{{API_BASE_URL}}"; // <<-- REPLACE this with your ngrok URL, e.g. https://b54f7894b86a.ngrok-free.app
+  const AUTH_HEADER_KEY = "access_token";
+  const TOKEN_STORAGE_KEY = "cs_access_token";
+  const SESSION_INFO_KEY = "cs_session_info";
+
+  /*****************************************************************************
+   * HELPERS & ADAPTER
+   * The adapter maps UI field names to backend field names. If your backend
+   * uses different keys, change the adapter functions below.
+   *****************************************************************************/
+  const adapter = {
+    userFromApi(row){
+      // expects API user object -> UI user object
+      // Adjust this mapping if your API returns different field names
+      return {
+        identifier: row.identifier || row.id || "",
+        name: row.name || row.full_name || "",
+        created_at: row.created_at || row.created || dayjs().format('YYYY-MM-DD'),
+        score: row.score !== undefined ? row.score : (row.s || 600),
+        frozen: !!row.frozen,
+      };
+    },
+    loanFromApi(row){
+      // Map loan API -> UI loan object (ensure 4-digit padded id)
+      const rawId = row.loan_id || row.id || row.loanId || 0;
+      const padded = String(rawId).padStart(4,'0');
+      return {
+        id: rawId,
+        loan_id: padded,
+        user_identifier: row.user_identifier || row.user_id || row.owner || "",
+        loan_type: row.loan_type || row.type || "personal",
+        amount: Number(row.amount || row.principal || 0),
+        paid: Number(row.paid || row.repaid || 0),
+        balance: Number(row.balance !== undefined ? row.balance : (row.amount - (row.paid||0))),
+        start_date: row.start_date || row.start || dayjs().format('YYYY-MM-DD'),
+        term_months: Number(row.term_months || row.term || 12),
+        status: row.status || (row.defaulted ? "defaulted":"open"),
+        missed_payments: Number(row.missed_payments || row.missed || 0),
+        defaulted: !!row.defaulted,
+        interest_rate: Number(row.interest_rate || row.rate || 0),
+        end_date: row.end_date || row.closed_at || null,
+      };
+    },
+    logFromApi(row){
+      return {
+        id: row.id,
+        timestamp: row.timestamp,
+        user_identifier: row.user_identifier || row.user || null,
+        action: row.action,
+        details: row.details
+      };
+    }
+  };
+
+  /*****************************************************************************
+   * AXIOS SETUP
+   *****************************************************************************/
+  const api = axios.create({
+    baseURL: DEV_MODE ? null : API_BASE,
+    timeout: 20000
+  });
+
+  // Attach token to all requests automatically (if present)
+  api.interceptors.request.use(cfg=>{
+    const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if(token){
+      cfg.headers['Authorization'] = `Bearer ${token}`;
+    }
+    // For DEV_MODE fallback, allow null baseURL and override in functions
+    return cfg;
+  });
+
+  api.interceptors.response.use(resp => resp, err => {
+    // Global error handling: show toast and pass on
+    const msg = err.response ? (err.response.data?.detail || err.response.statusText) : err.message;
+    Toast(msg || "Network error", "error");
+    return Promise.reject(err);
+  });
+
+  /*****************************************************************************
+   * TOAST / ALERT wrappers
+   *****************************************************************************/
+  function Toast(msg, type='info', duration=3000){
+    Toastify({
+      text: msg,
+      duration: duration,
+      gravity: "top",
+      position: 'right',
+      close: true,
+      backgroundColor: type==='error' ? "linear-gradient(90deg,#ff6b6b,#ff9b9b)" : (type==='success' ? "linear-gradient(90deg,#2ecc71,#4ade80)" : "linear-gradient(90deg,#60a5fa,#4fd1c5)"),
+    }).showToast();
+  }
+
+  /*****************************************************************************
+   * MOCK DATA (DEV_MODE)
+   *****************************************************************************/
+  const mock = {
+    users: [
+      { identifier:'123456789', name:'TestUser', created_at:'2025-07-25', score:776, frozen:false },
+      { identifier:'000111222', name:'Alice Demo', created_at:'2024-10-01', score:650, frozen:false },
+      { identifier:'999888777', name:'Bob Example', created_at:'2023-05-12', score:520, frozen:true },
+    ],
+    loans: [
+      { loan_id:'0001', id:1, user_identifier:'123456789', loan_type:'personal', amount:1000, paid:200, balance:800, start_date:'2024-01-01', term_months:12, missed_payments:0, defaulted:false, interest_rate:3.5 },
+      { loan_id:'0002', id:2, user_identifier:'000111222', loan_type:'auto', amount:15000, paid:5000, balance:10000, start_date:'2023-06-01', term_months:60, missed_payments:2, defaulted:false, interest_rate:5.0 },
+      { loan_id:'0003', id:3, user_identifier:'999888777', loan_type:'student', amount:5000, paid:0, balance:5000, start_date:'2022-04-01', term_months:120, missed_payments:6, defaulted:true, interest_rate:0 },
+    ],
+    logs: [
+      { id:1, timestamp: dayjs().subtract(1,'day').toISOString(), user_identifier:'123456789', action:'create_user', details:'Created TestUser' },
+      { id:2, timestamp: dayjs().subtract(3,'day').toISOString(), user_identifier:'999888777', action:'default_loan', details:'Loan 0003 defaulted' },
+    ],
+    seedDemo(){ /* create more demo items if desired */ }
+  };
+
+  /*****************************************************************************
+   * VUE APP
+   *****************************************************************************/
+  const { createApp, ref, computed } = Vue;
+
+  createApp({
+    data(){
+      return {
+        API_BASE: API_BASE,
+        DEV_MODE: DEV_MODE,
+        ui: {
+          view: 'dashboard',
+          search: '',
+          userFilter:'',
+          userEdit:null,
+          quick:'',
+          userSelectedId:null,
+          userPage:1,
+          logsFrom:'',
+          logsTo:'',
+          logsUser:'',
+          loanFilterType:'',
+          loanFilterStatus:''
+        },
+        users: [],
+        loans: [],
+        logs: [],
+        selectedUser: null,
+        stats: { total_users:0, active_loans:0, defaults:0, avg_score:0, last_updated: dayjs().format('YYYY-MM-DD HH:mm') },
+        connected: true,
+        systemStatus: {},
+        userSession: JSON.parse(sessionStorage.getItem(SESSION_INFO_KEY) || '{}'),
+        isLight: false,
+        loanTypes: ['personal','auto','student','mortgage','other'],
+        tables: { usersTable:null, loansTable:null, selLoansTable:null },
+      };
+    },
+    computed: {
+      loggedIn(){ return !!sessionStorage.getItem(TOKEN_STORAGE_KEY) && !!this.userSession.employee_name; },
+      initials(){ return (this.userSession.employee_name || 'G').split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase(); },
+      theme(){ return this.isLight ? 'light' : 'dark'; }
+    },
+    watch: {
+      isLight(val){ document.body.setAttribute('data-theme', val ? 'light' : 'dark'); localStorage.setItem('cs_theme', val?'light':'dark'); }
+    },
+    filters: {
+      json(val){ return JSON.stringify(val, null, 2); }
+    },
+    mounted(){
+      // Apply theme preference
+      const theme = localStorage.getItem('cs_theme');
+      this.isLight = theme === 'light';
+      document.body.setAttribute('data-theme', this.isLight ? 'light' : 'dark');
+
+      // Load demo or real data
+      if(this.DEV_MODE){
+        this.users = mock.users.map(u=>adapter.userFromApi(u));
+        this.loans = mock.loans.map(l=>adapter.loanFromApi(l));
+        this.logs = mock.logs.map(l=>adapter.logFromApi(l));
+        this.refreshStats();
+      } else {
+        this.loadUsers();
+        this.loadLoans();
+        this.loadLogs();
+        this.getSystemStatus();
+      }
+
+      // Initialize Tabulator after short delay (ensures DOM)
+      setTimeout(()=>{ this.initUsersTable(); this.initLoansTable(); }, 250);
+
+      // Keyboard shortcut for quick search: '/' focuses search
+      window.addEventListener('keydown', (e)=>{ if(e.key === '/' && document.activeElement.tagName !== 'INPUT'){ e.preventDefault(); this.$nextTick(()=>document.querySelector('.nav input')?.focus()); } });
+
+      // Poll system status occasionally
+      setInterval(()=>{ if(!this.DEV_MODE) this.getSystemStatus(); }, 60000);
+    },
+    methods: {
+      applyTheme(){ /* watcher handles applying */ },
+
+      /**************************
+       * AUTH
+       **************************/
+      openLogin(){
+        if(this.DEV_MODE){
+          // Demo login
+          Swal.fire({
+            title: 'Demo Login',
+            html: `<input id="sw-user" class="swal2-input" placeholder="username" value="admin">
+                   <input id="sw-pass" type="password" class="swal2-input" placeholder="password" value="demo">`,
+            focusConfirm: false,
+            preConfirm: ()=>{
+              const username=document.getElementById('sw-user').value;
+              const password=document.getElementById('sw-pass').value;
+              if(!username || !password) Swal.showValidationMessage('Enter both');
+              return { username, password };
+            }
+          }).then((res)=>{
+            if(res.isConfirmed){
+              // Fake token & session
+              const token = 'demo-token-'+Math.random().toString(36).slice(2);
+              sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+              this.userSession = { employee_name: 'Admin Demo', role:'admin', expires_at: Date.now()+3600*1000 };
+              sessionStorage.setItem(SESSION_INFO_KEY, JSON.stringify(this.userSession));
+              Toast('Logged in (demo)', 'success');
+            }
+          });
+          return;
+        }
+
+        // Real login flow
+        Swal.fire({
+          title: 'Employee Login',
+          html: `<input id="sw-user" class="swal2-input" placeholder="username">
+                 <input id="sw-pass" type="password" class="swal2-input" placeholder="password">`,
+          focusConfirm: false,
+          preConfirm: ()=>{
+            const username=document.getElementById('sw-user').value;
+            const password=document.getElementById('sw-pass').value;
+            if(!username || !password) Swal.showValidationMessage('Enter both credentials');
+            return { username, password };
+          }
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          const creds = res.value;
+          try {
+            const r = await api.post('/auth/login', creds);
+            const token = r.data.access_token;
+            sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+            this.userSession = { employee_name: r.data.employee_name, role: r.data.role || 'employee', expires_at: Date.now() + (r.data.expires_in || 3600)*1000 };
+            sessionStorage.setItem(SESSION_INFO_KEY, JSON.stringify(this.userSession));
+            Toast('Login successful', 'success');
+          } catch(e){
+            Toast('Login failed', 'error');
+          }
+        });
+      },
+
+      logout(){
+        sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+        sessionStorage.removeItem(SESSION_INFO_KEY);
+        this.userSession = {};
+        Toast('Logged out', 'info');
+      },
+
+      /**************************
+       * USERS
+       **************************/
+      async loadUsers(){
+        try {
+          if(this.DEV_MODE){
+            this.users = mock.users.map(u => adapter.userFromApi(u));
+            this.refreshStats();
+            this.reloadUsersTable();
+            return;
+          }
+          const r = await api.get('/users');
+          this.users = (r.data || []).map(u => adapter.userFromApi(u));
+          this.refreshStats();
+          this.reloadUsersTable();
+        } catch(err){ console.error(err); }
+      },
+
+      async createUserApi(payload){
+        // payload: { identifier?, name }
+        if(this.DEV_MODE){
+          // Auto-generate id if blank
+          const id = payload.identifier && payload.identifier.trim() ? payload.identifier.trim() : String(Math.floor(Math.random()*900000000)+100000000);
+          const user = { identifier: id, name: payload.name, created_at: dayjs().format('YYYY-MM-DD'), score: BASE_SCORE || 600, frozen:false };
+          mock.users.unshift(user);
+          this.loadUsers();
+          return adapter.userFromApi(user);
+        }
+        const r = await api.post('/users', payload);
+        return adapter.userFromApi(r.data);
+      },
+
+      openCreateUser(){
+        Swal.fire({
+          title: 'Create User',
+          html:
+            `<input id="u-id" class="swal2-input" placeholder="Identifier (blank=auto)">
+             <input id="u-name" class="swal2-input" placeholder="Full name">`,
+          preConfirm: ()=>{
+            return {
+              identifier: document.getElementById('u-id').value.trim(),
+              name: document.getElementById('u-name').value.trim()
+            };
+          }
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          const payload = res.value;
+          if(!payload.name){ Swal.showValidationMessage('Name required'); return; }
+          try{
+            const u = await this.createUserApi(payload);
+            Toast('User created', 'success');
+            this.loadUsers();
+          } catch(e){ Toast('Failed to create user', 'error'); }
+        });
+      },
+
+      editUser(u){
+        Swal.fire({
+          title: 'Edit User Name',
+          input: 'text',
+          inputValue: u.name,
+          showCancelButton:true
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          const newName = res.value.trim();
+          if(!newName) { Toast('Name cannot be empty','error'); return; }
+          if(this.DEV_MODE){
+            const mu = mock.users.find(x=>x.identifier===u.identifier);
+            if(mu) mu.name = newName;
+            this.loadUsers();
+            Toast('User updated (demo)', 'success');
+            return;
+          }
+          try {
+            await api.put(`/users/${u.identifier}`, { identifier:u.identifier, name:newName });
+            Toast('User updated', 'success');
+            this.loadUsers();
+          } catch(e){ Toast('Update failed','error'); }
+        });
+      },
+
+      deleteUser(u){
+        Swal.fire({
+          title: `Delete ${u.name}?`,
+          text: "This will delete the user and associated loans. This action cannot be undone.",
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Delete'
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          if(this.DEV_MODE){
+            mock.users = mock.users.filter(x=>x.identifier!==u.identifier);
+            mock.loans = mock.loans.filter(l=>l.user_identifier!==u.identifier);
+            this.loadUsers();
+            Toast('User removed (demo)', 'success');
+            return;
+          }
+          try {
+            await api.delete(`/users/${u.identifier}`);
+            Toast('User deleted', 'success');
+            this.loadUsers();
+          } catch(e){ Toast('Delete failed','error'); }
+        });
+      },
+
+      async getUserDetail(id){
+        if(this.DEV_MODE){
+          const u = mock.users.find(x=>x.identifier === id);
+          if(!u) { Toast('User not found (demo)','error'); return; }
+          this.selectedUser = adapter.userFromApi(u);
+          this.reloadSelectedLoansTable();
+          this.updateBreakdownChart();
+          return;
+        }
+        try {
+          const r = await api.get(`/users/${id}`);
+          this.selectedUser = adapter.userFromApi(r.data);
+          // Load user's loans
+          await this.loadLoansForUser(id);
+          this.updateBreakdownChart();
+        } catch(e){ Toast('Failed to load user','error'); }
+      },
+
+      /**************************
+       * LOANS
+       **************************/
+      initLoansTable(){
+        // Tabulator for global loans
+        const self = this;
+        this.tables.loansTable = new Tabulator("#loans-table", {
+          layout:"fitColumns",
+          movableColumns:true,
+          placeholder:"No loans available",
+          columns:[
+            {title:"Loan ID", field:"loan_id", width:80, hozAlign:"center"},
+            {title:"User", field:"user_identifier"},
+            {title:"Type", field:"loan_type"},
+            {title:"Amount", field:"amount", formatter:"money", formatterParams:{symbol:"$"}},
+            {title:"Balance", field:"balance", formatter:"money", formatterParams:{symbol:"$"}},
+            {title:"Missed", field:"missed_payments", hozAlign:"center"},
+            {title:"Defaulted", field:"defaulted", hozAlign:"center", formatter:(cell)=> cell.getValue()?'<span style="color:#ff6b6b">YES</span>':'NO'},
+            {title:"Actions", field:"actions", formatter:function(cell, formatterParams){
+              return `<button class="btn small" data-action="view">View</button> <button class="btn small" data-action="pay">Pay</button>`;
+            }, cellClick:function(e, cell){
+              const row = cell.getRow().getData();
+              const action = e.target.getAttribute('data-action');
+              if(action==='view') self.viewLoan(row);
+              if(action==='pay') self.openMakePayment(row);
+            }}
+          ]
+        });
+        this.reloadLoansTable();
+      },
+
+      async loadLoans(){
+        if(this.DEV_MODE){
+          this.loans = mock.loans.map(l=>adapter.loanFromApi(l));
+          this.reloadLoansTable();
+          return;
+        }
+        try {
+          const r = await api.get('/loans');
+          this.loans = (r.data || []).map(l=>adapter.loanFromApi(l));
+          this.reloadLoansTable();
+        } catch(e){ console.error(e); }
+      },
+
+      async addLoanApi(payload){
+        if(this.DEV_MODE){
+          const newId = mock.loans.length ? (Math.max(...mock.loans.map(l=>l.id)) + 1) : 1;
+          const loan = { id:newId, loan_id:String(newId).padStart(4,'0'), user_identifier:payload.user_identifier, loan_type:payload.loan_type, amount:payload.amount, paid:0, balance:payload.amount, start_date:payload.start_date, term_months:payload.term_months, missed_payments:0, defaulted:false, interest_rate:payload.interest_rate };
+          mock.loans.unshift(loan);
+          this.loadLoansForUser(payload.user_identifier);
+          Toast('Loan added (demo)','success');
+          return adapter.loanFromApi(loan);
+        }
+        const r = await api.post('/loans', payload);
+        return adapter.loanFromApi(r.data);
+      },
+
+      openAddLoan(){
+        // Show modal with fields
+        Swal.fire({
+          title: 'Add Loan',
+          html:
+            `<select id="loan-type" class="swal2-input">
+               <option value="personal">personal</option>
+               <option value="auto">auto</option>
+               <option value="student">student</option>
+               <option value="mortgage">mortgage</option>
+               <option value="other">other</option>
+             </select>
+             <input id="loan-user" class="swal2-input" placeholder="User identifier">
+             <input id="loan-amount" class="swal2-input" placeholder="Amount">
+             <input id="loan-start" class="swal2-input" placeholder="Start date (YYYY-MM-DD)" value="${dayjs().format('YYYY-MM-DD')}">
+             <input id="loan-term" class="swal2-input" placeholder="Term months (12)">
+             <input id="loan-rate" class="swal2-input" placeholder="Interest rate % (0)">`,
+          focusConfirm: false,
+          preConfirm: ()=>{
+            return {
+              loan_type: document.getElementById('loan-type').value,
+              user_identifier: document.getElementById('loan-user').value.trim(),
+              amount: Number(document.getElementById('loan-amount').value),
+              start_date: document.getElementById('loan-start').value,
+              term_months: Number(document.getElementById('loan-term').value) || 12,
+              interest_rate: Number(document.getElementById('loan-rate').value) || 0
+            };
+          }
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          const payload = res.value;
+          if(!payload.user_identifier || !payload.amount || payload.amount <= 0) { Toast('Invalid input','error'); return; }
+          try {
+            const loan = await this.addLoanApi(payload);
+            Toast('Loan created', 'success');
+            this.loadLoansForUser(payload.user_identifier);
+            this.loadLoans();
+          } catch(e){ Toast('Loan creation failed','error'); }
+        });
+      },
+
+      async loadLoansForUser(userId){
+        if(!userId) return;
+        if(this.DEV_MODE){
+          const list = mock.loans.filter(l=>l.user_identifier===userId).map(l=>adapter.loanFromApi(l));
+          this.reloadSelectedLoansTable(list);
+          return;
+        }
+        try {
+          const r = await api.get(`/users/${userId}/loans`);
+          const list = (r.data || []).map(l=>adapter.loanFromApi(l));
+          this.reloadSelectedLoansTable(list);
+        } catch(e){ console.error(e); }
+      },
+
+      initUsersTable(){
+        const self = this;
+        this.tables.usersTable = new Tabulator("#users-table", {
+          layout:"fitColumns",
+          placeholder:"No users found",
+          height:360,
+          columns:[
+            {title:"Identifier", field:"identifier", frozen:true, width:120},
+            {title:"Name", field:"name", headerFilter:"input"},
+            {title:"Score", field:"score", hozAlign:"center"},
+            {title:"Frozen", field:"frozen", hozAlign:"center", formatter:function(cell){ return cell.getValue() ? '<span style="color:#ff6b6b">YES</span>' : 'No'; }},
+            {title:"Actions", field:"actions", formatter:function(cell){
+              return `<button class="btn small" data-action="view">View</button> <button class="btn small" data-action="edit">Edit</button> <button class="btn small" data-action="delete">Delete</button>`;
+            }, cellClick:function(e, cell){
+              const row = cell.getRow().getData();
+              const action = e.target.getAttribute('data-action');
+              if(action==='view') self.getUserDetail(row.identifier);
+              if(action==='edit') self.editUser(row);
+              if(action==='delete') self.deleteUser(row);
+            }}
+          ]
+        });
+        this.reloadUsersTable();
+      },
+
+      reloadUsersTable(){
+        const dataset = this.users.filter(u => {
+          if(!this.ui.userFilter) return true;
+          const f = this.ui.userFilter.toLowerCase();
+          return u.name.toLowerCase().includes(f) || u.identifier.includes(f);
+        });
+        if(this.tables.usersTable) this.tables.usersTable.setData(dataset);
+      },
+
+      reloadLoansTable(){
+        const dataset = this.loans.filter(l=>{
+          if(this.ui.loanFilterType && l.loan_type !== this.ui.loanFilterType) return false;
+          if(this.ui.loanFilterStatus){
+            if(this.ui.loanFilterStatus==='defaulted' && !l.defaulted) return false;
+            if(this.ui.loanFilterStatus==='open' && l.defaulted) return false; // simplistic
+            // closed status mapping could depend on end_date
+          }
+          return true;
+        });
+        if(this.tables.loansTable) this.tables.loansTable.setData(dataset);
+      },
+
+      reloadSelectedLoansTable(list){
+        const data = list || this.loans.filter(l=>l.user_identifier === (this.selectedUser?.identifier||'')) || [];
+        if(!this.tables.selLoansTable){
+          this.tables.selLoansTable = new Tabulator("#selected-loans-table", {
+            layout:"fitColumns", placeholder:"No loans for user",
+            columns:[
+              {title:"Loan ID", field:"loan_id", width:80},
+              {title:"Type", field:"loan_type"},
+              {title:"Amount", field:"amount", formatter:"money", formatterParams:{symbol:"$"}},
+              {title:"Balance", field:"balance", formatter:"money", formatterParams:{symbol:"$"}},
+              {title:"Missed", field:"missed_payments"},
+              {title:"Defaulted", field:"defaulted", formatter:(cell)=> cell.getValue()?'<span style="color:#ff6b6b">YES</span>':'NO'},
+              {title:"Actions", field:"actions", formatter:function(cell, formatterParams, onRendered){
+                return `<button class="btn small" data-action="pay">Pay</button> <button class="btn small" data-action="miss">Miss</button> <button class="btn small" data-action="def">Default</button> <button class="btn small" data-action="close">Close</button>`;
+              }, cellClick:(e, cell)=>{
+                const row = cell.getRow().getData();
+                const action = e.target.getAttribute('data-action');
+                if(action==='pay') this.openMakePayment(row);
+                if(action==='miss') this.recordMissed(row);
+                if(action==='def') this.markDefault(row);
+                if(action==='close') this.closeLoan(row);
+              }}
+            ]
+          });
+        }
+        this.tables.selLoansTable.setData(data);
+      },
+
+      viewLoan(row){
+        // Show loan details modal
+        const loan = row;
+        Swal.fire({
+          title: `Loan ${loan.loan_id}`,
+          html:
+            `<div style="text-align:left">
+              <p><strong>Type:</strong> ${loan.loan_type}</p>
+              <p><strong>Amount:</strong> $${loan.amount.toFixed(2)}</p>
+              <p><strong>Balance:</strong> $${loan.balance.toFixed(2)}</p>
+              <p><strong>Missed payments:</strong> ${loan.missed_payments}</p>
+              <p><strong>Defaulted:</strong> ${loan.defaulted ? 'Yes' : 'No'}</p>
+            </div>`,
+          showCloseButton:true
+        });
+      },
+
+      openMakePayment(loan){
+        Swal.fire({
+          title:`Payment for ${loan.loan_id}`,
+          html:`<input id="pay-amt" class="swal2-input" placeholder="Amount">`,
+          preConfirm: ()=> ({ amount: Number(document.getElementById('pay-amt').value) })
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          const amt = res.value.amount;
+          if(amt <= 0){ Toast('Amount must be positive','error'); return; }
+          try {
+            if(this.DEV_MODE){
+              const mloan = mock.loans.find(l=>String(l.id) === String(loan.id) || l.loan_id === loan.loan_id);
+              if(mloan){
+                mloan.paid = (mloan.paid || 0) + amt;
+                mloan.balance = Math.max(0, mloan.amount - mloan.paid);
+                if(mloan.balance <= 0){ mloan.end_date = dayjs().toISOString(); mloan.defaulted = false; }
+                mock.logs.unshift({ id: mock.logs.length+1, timestamp: dayjs().toISOString(), user_identifier:mloan.user_identifier, action:'make_payment', details:`Payment ${amt} on ${mloan.loan_id}` });
+                this.loadLoansForUser(mloan.user_identifier);
+                this.loadLoans();
+                Toast('Payment recorded (demo)', 'success');
+              }
+              return;
+            }
+            await api.post(`/loans/${loan.id}/payment`, { amount: amt });
+            Toast('Payment recorded', 'success');
+            this.loadLoansForUser(loan.user_identifier);
+            this.loadLoans();
+          } catch(e){ Toast('Payment failed','error'); }
+        });
+      },
+
+      async recordMissed(loan){
+        if(this.DEV_MODE){
+          const mloan = mock.loans.find(l=>String(l.id) === String(loan.id));
+          if(mloan){ mloan.missed_payments = (mloan.missed_payments||0) + 1; mock.logs.unshift({ id:mock.logs.length+1, timestamp:dayjs().toISOString(), user_identifier:mloan.user_identifier, action:'missed_payment', details:`Missed on ${mloan.loan_id}` }); this.loadLoansForUser(mloan.user_identifier); Toast('Miss recorded (demo)','success'); }
+          return;
+        }
+        // Backend endpoint may vary; fallback to patch /loans/{id}/miss or custom
+        try {
+          await api.post(`/loans/${loan.id}/missed`); // expected endpoint
+          Toast('Miss recorded', 'success');
+          this.loadLoansForUser(loan.user_identifier);
+        } catch(e){
+          // Fallback: try a PATCH to increment missed_payments
+          try {
+            await api.patch(`/loans/${loan.id}`, { op:'increment_missed' });
+            Toast('Miss recorded via fallback', 'success');
+            this.loadLoansForUser(loan.user_identifier);
+          } catch(err){ Toast('Record missed failed','error'); }
+        }
+      },
+
+      async markDefault(loan){
+        Swal.fire({
+          title:`Mark ${loan.loan_id} as defaulted?`,
+          text:"This will freeze user's credit until resolved.",
+          icon:'warning',
+          showCancelButton:true
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          if(this.DEV_MODE){
+            const mloan = mock.loans.find(l=>String(l.id) === String(loan.id));
+            if(mloan){ mloan.defaulted = true; mock.logs.unshift({id:mock.logs.length+1,timestamp:dayjs().toISOString(),user_identifier:mloan.user_identifier,action:'default_loan',details:`Loan ${mloan.loan_id} defaulted`}); this.loadLoansForUser(mloan.user_identifier); Toast('Loan defaulted (demo)','success'); }
+            return;
+          }
+          try {
+            await api.post(`/loans/${loan.id}/default`);
+            Toast('Loan defaulted', 'success');
+            this.loadLoansForUser(loan.user_identifier);
+          } catch(e){ Toast('Default failed', 'error'); }
+        });
+      },
+
+      async closeLoan(loan){
+        Swal.fire({
+          title:`Close ${loan.loan_id}?`,
+          text: "This will close the loan if balance is zero.",
+          showCancelButton:true
+        }).then(async (res)=>{
+          if(!res.isConfirmed) return;
+          if(this.DEV_MODE){
+            const mloan = mock.loans.find(l=>String(l.id) === String(loan.id));
+            if(mloan && mloan.balance <= 0){ mloan.end_date = dayjs().toISOString(); mock.logs.unshift({id:mock.logs.length+1,timestamp:dayjs().toISOString(),user_identifier:mloan.user_identifier,action:'close_loan',details:`Loan ${mloan.loan_id} closed`}); this.loadLoansForUser(mloan.user_identifier); Toast('Loan closed (demo)','success'); return; }
+            Toast('Loan cannot be closed: outstanding balance', 'error'); return;
+          }
+          try {
+            await api.post(`/loans/${loan.id}/close`);
+            Toast('Loan closed', 'success');
+            this.loadLoansForUser(loan.user_identifier);
+            this.loadLoans();
+          } catch(e){ Toast('Close failed','error'); }
+        });
+      },
+
+      /**************************
+       * LOGS & EXPORTS
+       **************************/
+      async loadLogs(limit=100){
+        if(this.DEV_MODE){
+          this.logs = mock.logs.map(l=>adapter.logFromApi(l));
+          return;
+        }
+        try {
+          const params = {};
+          if(this.ui.logsUser) params.user = this.ui.logsUser;
+          const r = await api.get(`/logs`, { params:{ limit } });
+          this.logs = (r.data || []).map(adapter.logFromApi);
+        } catch(e){ console.error(e); }
+      },
+
+      downloadLogsCSV(){
+        // Convert logs to CSV and download
+        const rows = this.logs.map(l => ({ id:l.id, timestamp:l.timestamp, user:l.user_identifier, action:l.action, details:l.details }));
+        const csv = this.toCSV(rows);
+        const blob = new Blob([csv], { type:'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'logs.csv'; a.click(); URL.revokeObjectURL(url);
+        Toast('Logs CSV downloaded', 'success');
+      },
+
+      toCSV(rows){
+        if(!rows.length) return '';
+        const keys = Object.keys(rows[0]);
+        const header = keys.join(',') + '\n';
+        const lines = rows.map(r => keys.map(k => `"${String(r[k]||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+        return header + lines;
+      },
+
+      /**************************
+       * ADMIN / UTIL
+       **************************/
+      async seedDemo(){
+        if(this.DEV_MODE){
+          mock.seedDemo();
+          Toast('Demo seeded', 'success');
+          this.loadUsers(); this.loadLoans(); this.loadLogs();
+          return;
+        }
+        try {
+          await api.post('/admin/seed-demo');
+          Toast('Seeded demo data', 'success');
+          this.loadUsers(); this.loadLoans(); this.loadLogs();
+        } catch(e){ Toast('Seed failed','error'); }
+      },
+
+      async initDB(){
+        if(this.DEV_MODE){ Toast('Init DB simulated (demo)'); return; }
+        try {
+          await api.post('/admin/init');
+          Toast('DB initialized', 'success');
+        } catch(e){ Toast('Init failed','error'); }
+      },
+
+      async backup(){
+        if(this.DEV_MODE){ Toast('Backup simulated (demo)'); return; }
+        try {
+          await api.post('/admin/backup');
+          Toast('Backup triggered', 'success');
+        } catch(e){ Toast('Backup failed','error'); }
+      },
+
+      async getSystemStatus(){
+        if(this.DEV_MODE){ this.systemStatus = { uptime:'demo', backend_status:'demo', database_size:'--' }; return; }
+        try {
+          const r = await api.get('/admin/status');
+          this.systemStatus = r.data;
+        } catch(e){ this.systemStatus = { error:'unreachable' }; }
+      },
+
+      handleImport(e){
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt)=>{
+          try{
+            const json = JSON.parse(evt.target.result);
+            // Quick restore simulation (demo)
+            if(this.DEV_MODE){
+              if(Array.isArray(json.loans)) mock.loans = mock.loans.concat(json.loans);
+              if(Array.isArray(json.users)) mock.users = mock.users.concat(json.users);
+              Toast('Imported (demo)', 'success');
+              this.loadUsers(); this.loadLoans();
+            } else {
+              // If backend supports restore endpoint, send it
+              api.post('/admin/restore', json).then(()=>{ Toast('Restored from JSON', 'success'); }).catch(()=>Toast('Restore failed','error'));
+            }
+          }catch(err){ Toast('Invalid JSON','error'); }
+        };
+        reader.readAsText(file);
+      },
+
+      showSystemStatus(){ Swal.fire({ title:'System Status', html:`<pre style="text-align:left">${JSON.stringify(this.systemStatus, null, 2)}</pre>`, width:800 }); },
+
+      /**************************
+       * UI helpers & utils
+       **************************/
+      formatDate(ts){ return ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : ''; },
+
+      quickSearch(){
+        const q = this.ui.quick.trim();
+        if(!q) return;
+        const u = this.users.find(x => x.identifier===q || x.name.toLowerCase()===q.toLowerCase());
+        if(u){ this.ui.view='users'; this.getUserDetail(u.identifier); return; }
+        Toast('User not found','error');
+      },
+
+      searchUsers(){ this.ui.view='users'; this.ui.userFilter = this.ui.search; this.loadUsers(); },
+
+      refreshAll(){ this.loadUsers(); this.loadLoans(); this.loadLogs(); this.getSystemStatus(); },
+
+      /**************************
+       * Charts & stats
+       **************************/
+      refreshStats(){
+        this.stats.total_users = this.users.length;
+        this.stats.active_loans = this.loans.filter(l=>!l.defaulted && l.balance > 0).length;
+        this.stats.defaults = this.loans.filter(l=>l.defaulted).length;
+        this.stats.avg_score = (this.users.length ? Math.round(this.users.reduce((s,u)=>s+u.score,0)/this.users.length) : 0);
+        this.stats.last_updated = dayjs().format('YYYY-MM-DD HH:mm');
+        this.renderCharts();
+      },
+
+      renderCharts(){
+        // Score trend (mock): show avg score history from logs or random
+        const labels = [];
+        const data = [];
+        for(let i=12;i>=0;i--){
+          labels.push(dayjs().subtract(i,'week').format('YYYY-MM-DD'));
+          data.push(Math.round((600 + Math.random()*200)));
+        }
+        if(window.scoreTrendChart) window.scoreTrendChart.destroy();
+        const ctx = document.getElementById('scoreTrendChart').getContext('2d');
+        window.scoreTrendChart = new Chart(ctx, {
+          type:'line',
+          data:{ labels, datasets:[{ label:'Avg Score', data, fill:true, tension:0.3, borderColor:getComputedStyle(document.body).getPropertyValue('--accent-2').trim() || '#60a5fa', backgroundColor:'rgba(96,165,250,0.12)'}]},
+          options:{ responsive:true, plugins:{ legend:{ display:false } } }
+        });
+
+        // Loan distribution donut
+        const types = {};
+        this.loans.forEach(l=> types[l.loan_type] = (types[l.loan_type] || 0) + 1);
+        const doughLabels = Object.keys(types);
+        const doughData = Object.values(types);
+        if(window.loanDonutChart) window.loanDonutChart.destroy();
+        const dctx = document.getElementById('loanDonutChart').getContext('2d');
+        window.loanDonutChart = new Chart(dctx, {
+          type:'doughnut',
+          data:{ labels:doughLabels, datasets:[{ data:doughData, backgroundColor:['#60a5fa','#4fd1c5','#f6ad55','#f472b6','#a78bfa'] }]},
+          options:{ responsive:true }
+        });
+      },
+
+      updateBreakdownChart(){
+        // Simple breakdown using mock proportions
+        const loanComp = Math.random(); const ageComp = 1 - loanComp;
+        const ctx = document.getElementById('breakdownChart').getContext('2d');
+        if(window.breakdownChart) window.breakdownChart.destroy();
+        window.breakdownChart = new Chart(ctx, {
+          type:'pie',
+          data:{ labels:['Loans','Account Age'], datasets:[{data:[loanComp, ageComp].map(x=>Math.round(x*100)), backgroundColor:['#60a5fa','#4fd1c5']}] },
+          options:{ responsive:true }
+        });
+      },
+
+      /**************************
+       * Utility: table refresh & misc
+       **************************/
+      reloadUsersTable(){ if(this.tables.usersTable) this.tables.usersTable.setData(this.users); },
+      reloadSelectedLoansTable(){ this.reloadSelectedLoansTable(); }, // placeholder (method exists above)
+
+    } // methods end
+  }).mount('#app');
+
+  </script>
+</body>
+</html>
